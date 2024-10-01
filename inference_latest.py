@@ -39,18 +39,21 @@ if __name__ == "__main__":
         data = load_dataset('json',data_files=test_data, num_proc=int(os.cpu_count()*0.95), split='train', cache_dir='../cache')
     else:
         data = load_dataset('json',data_files=args.test_data, num_proc=int(os.cpu_count()*0.95), split='train', cache_dir='../cache')
-    print('reading is done')
+    if accelerator.is_main_process:
+        print('reading is done')
     # sharding 
     ## sharding을 해야, 각 device의 각각의 cpu에서 tokenize가 진행됨.
     total_rank = accelerator.num_processes
     rank = accelerator.local_process_index
     ds = data.shard(num_shards=total_rank, index=rank, contiguous=True)
-    print('sharding is done')
+    if accelerator.is_main_process:
+        print('sharding is done')
     ds = ds.map(lambda x: {"input_ids": tokenizer(x, max_length = 512, truncation=True,padding=True).input_ids, "attention_mask": tokenizer(x, max_length = 512, truncation=True,padding=True).attention_mask},
               batched=True,
               input_columns='text',
               num_proc=int(os.cpu_count()*0.95))
-    print('tokenizing is done')
+    if accelerator.is_main_process:
+        print('tokenizing is done')
     tokenized_dataset = []
     for start_idx in tqdm(range(0, len(ds), args.batch_size)):
         tmp = ds[start_idx:start_idx+args.batch_size]
@@ -64,6 +67,8 @@ if __name__ == "__main__":
             outputs = model(**batch)
             logits = outputs.logits.squeeze(-1).cpu().float().detach().numpy()
             scores.extend(logits)
+    if accelerator.is_main_process:
+        print('tagging is done')
     accelerator.wait_for_everyone()   
     # save for each
     ds = ds.add_column("score", scores)
@@ -75,6 +80,6 @@ if __name__ == "__main__":
     data_to_save.save_to_disk(os.path.join(args.output_dir,'_tmp_%d'%accelerator.local_process_index), num_proc = int(os.cpu_count()*0.9))
     end_time = datetime.datetime.now()
     elapsed_time = end_time-now
-    if accelerator.is_main_process():
+    if accelerator.is_main_process:
         print('done')
         print(elapsed_time.seconds)
